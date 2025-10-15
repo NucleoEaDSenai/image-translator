@@ -2,5 +2,5 @@ streamlit
 easyocr
 pillow
 numpy
-requests
 opencv-python-headless
+requests
