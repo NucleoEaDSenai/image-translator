@@ -8,13 +8,18 @@ import tempfile
 import os
 
 # ==========================================
+# AJUSTES DE AMBIENTE
+# ==========================================
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # força uso da CPU (estável no Streamlit Cloud)
+
+# ==========================================
 # CONFIGURAÇÃO GERAL
 # ==========================================
-st.set_page_config(page_title="Tradutor Visual Profissional v6", layout="wide")
-st.title("🖼️ Tradutor Visual Profissional v6")
+st.set_page_config(page_title="Tradutor Visual Profissional v6 (Streamlit)", layout="wide")
+st.title("🖼️ Tradutor Visual Profissional v6 (Streamlit)")
 st.markdown("""
-Upload de uma imagem contendo textos (fluxogramas, slides, prints, manuais, etc.)  
-O sistema detecta automaticamente os textos, traduz e gera uma nova imagem **idêntica visualmente**,  
+Upload de uma imagem com textos (fluxogramas, slides, prints, manuais, etc.).  
+O sistema detecta automaticamente os textos, traduz e recria a imagem **idêntica visualmente**,  
 mantendo cor, proporção, layout e fonte equivalente à original.
 """)
 
@@ -42,11 +47,11 @@ ENDPOINTS = [
 
 @st.cache_resource
 def carregar_ocr():
-    """Carrega o modelo OCR para os idiomas principais."""
-    return easyocr.Reader(["pt", "en", "es"])
+    """Carrega o modelo OCR (modo CPU)"""
+    return easyocr.Reader(["pt", "en", "es"], gpu=False)
 
 def preprocessar_imagem(caminho):
-    """Aumenta contraste e nitidez da imagem para OCR."""
+    """Aumenta contraste e nitidez para OCR mais preciso"""
     img = cv2.imread(caminho)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     gray = cv2.bilateralFilter(gray, 9, 75, 75)
@@ -58,27 +63,31 @@ def preprocessar_imagem(caminho):
     return temp_path
 
 def traduzir_texto(texto, origem, destino):
-    """Traduz texto com redundância de endpoints."""
+    """Traduz texto com fallback robusto"""
     texto = texto.strip()
     if not texto:
         return texto
-    # ignora siglas e blocos curtos
     if texto.isupper() and len(texto.split()) <= 3:
         return texto
     for url in ENDPOINTS:
         try:
             r = requests.post(url, json={"q": texto, "source": origem, "target": destino}, timeout=25)
             if r.status_code == 200:
-                return r.json().get("translatedText", texto)
-        except Exception:
+                data = r.json()
+                if "translatedText" in data:
+                    return data["translatedText"]
+            else:
+                print(f"Erro HTTP {r.status_code} em {url}")
+        except Exception as e:
+            print(f"Falha ao traduzir em {url}: {e}")
             continue
-    return texto
+    return texto  # fallback
 
 # ==========================================
 # FONTES E RENDERIZAÇÃO
 # ==========================================
-def carregar_fonte(tamanho=20, bold=False):
-    """Carrega a fonte mais próxima visualmente."""
+def carregar_fonte(tamanho=20):
+    """Carrega a fonte mais próxima visualmente"""
     fontes = [
         "fonts/Roboto-VariableFont_wdth,wght.ttf",
         "fonts/Arial.ttf",
@@ -93,7 +102,7 @@ def carregar_fonte(tamanho=20, bold=False):
     return ImageFont.load_default()
 
 def ajustar_tamanho_fonte(draw, texto, bbox):
-    """Ajusta o tamanho da fonte para caber perfeitamente na área."""
+    """Ajusta tamanho da fonte para caber na área"""
     largura_box = bbox[2][0] - bbox[0][0]
     altura_box = bbox[2][1] - bbox[0][1]
     tamanho = 10
@@ -101,12 +110,12 @@ def ajustar_tamanho_fonte(draw, texto, bbox):
     while draw.textlength(texto, font=fonte) < largura_box * 0.9 and tamanho < altura_box:
         tamanho += 1
         fonte = carregar_fonte(tamanho)
-        if tamanho > 100:
+        if tamanho > 120:
             break
     return fonte
 
 def cor_media_regiao(img_np, bbox):
-    """Determina a cor média de fundo na área do texto."""
+    """Obtém a cor média do fundo"""
     (x0, y0), (x1, y1) = bbox[0], bbox[2]
     x0, y0, x1, y1 = map(int, [x0, y0, x1, y1])
     recorte = img_np[y0:y1, x0:x1]
@@ -116,14 +125,24 @@ def cor_media_regiao(img_np, bbox):
     return media
 
 def escolher_cor_texto(cor_fundo):
-    """Escolhe preto ou branco com melhor contraste."""
+    """Escolhe preto ou branco com melhor contraste"""
     luminancia = (0.299*cor_fundo[0] + 0.587*cor_fundo[1] + 0.114*cor_fundo[2])
     return (0, 0, 0) if luminancia > 128 else (255, 255, 255)
 
 # ==========================================
-# FUNÇÃO PRINCIPAL
+# TRADUÇÃO DA IMAGEM
 # ==========================================
 def traduzir_imagem(caminho, origem, destino):
+    # Redimensiona se for muito grande
+    img = Image.open(caminho)
+    if max(img.size) > 2000:
+        escala = 2000 / max(img.size)
+        nova_tam = (int(img.size[0]*escala), int(img.size[1]*escala))
+        img = img.resize(nova_tam, Image.LANCZOS)
+        tmp_red = tempfile.NamedTemporaryFile(delete=False, suffix=".png").name
+        img.save(tmp_red)
+        caminho = tmp_red
+
     reader = carregar_ocr()
     caminho_pre = preprocessar_imagem(caminho)
     results = reader.readtext(caminho_pre, detail=1, paragraph=False)
@@ -136,7 +155,6 @@ def traduzir_imagem(caminho, origem, destino):
             bbox, texto, conf = res
         else:
             continue
-
         if conf < 0.6 or not texto.strip():
             continue
 
@@ -169,7 +187,7 @@ def traduzir_imagem(caminho, origem, destino):
 arquivo = st.file_uploader("📤 Envie a imagem (PNG, JPG, JPEG)", type=["png", "jpg", "jpeg"])
 
 if arquivo and st.button("🚀 Traduzir imagem"):
-    with st.spinner("Processando imagem e traduzindo textos..."):
+    with st.spinner("Processando e traduzindo textos..."):
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
         tmp.write(arquivo.read())
         tmp.close()
@@ -185,4 +203,4 @@ if arquivo and st.button("🚀 Traduzir imagem"):
             st.download_button("📥 Baixar imagem traduzida", f, file_name="imagem_traduzida.png")
 
 st.markdown("---")
-st.caption("💡 Tradução fiel via LibreTranslate, OCR adaptativo e renderização com fontes equivalentes (Roboto/Arial).")
+st.caption("💡 Tradução fiel via LibreTranslate, OCR adaptativo e otimização para Streamlit Cloud (CPU + redimensionamento).")
