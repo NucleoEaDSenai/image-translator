@@ -42,6 +42,7 @@ ENDPOINTS = [
 
 @st.cache_resource
 def carregar_ocr():
+    """Carrega o modelo EasyOCR para múltiplos idiomas."""
     return easyocr.Reader(["pt", "en", "es", "fr", "it", "de"])
 
 def traduzir_texto_bloco(texto, destino):
@@ -59,6 +60,7 @@ def traduzir_texto_bloco(texto, destino):
 # FUNÇÕES VISUAIS
 # ==========================================
 def cor_media_regiao(img_np, bbox):
+    """Obtém a cor média da área ao redor do texto (para cobrir fundo)."""
     (x0, y0), (x1, y1) = bbox[0], bbox[2]
     x0, y0, x1, y1 = map(int, [x0, y0, x1, y1])
     recorte = img_np[y0:y1, x0:x1]
@@ -68,10 +70,12 @@ def cor_media_regiao(img_np, bbox):
     return media
 
 def escolher_cor_texto(cor_fundo):
+    """Escolhe preto ou branco com melhor contraste."""
     luminancia = (0.299*cor_fundo[0] + 0.587*cor_fundo[1] + 0.114*cor_fundo[2])
     return (0, 0, 0) if luminancia > 128 else (255, 255, 255)
 
 def carregar_fonte_variavel(tamanho=20):
+    """Tenta carregar as fontes locais Roboto/Acme, com fallback padrão."""
     fontes = [
         "fonts/Roboto-VariableFont_wdth,wght.ttf",
         "fonts/Roboto-Italic-VariableFont_wdth,wght.ttf",
@@ -86,6 +90,7 @@ def carregar_fonte_variavel(tamanho=20):
     return ImageFont.load_default()
 
 def ajustar_tamanho_fonte(draw, texto, bbox):
+    """Redimensiona a fonte dinamicamente para caber no bloco."""
     largura_box = bbox[2][0] - bbox[0][0]
     altura_box = bbox[2][1] - bbox[0][1]
     tamanho = 10
@@ -97,16 +102,30 @@ def ajustar_tamanho_fonte(draw, texto, bbox):
             break
     return fonte
 
+# ==========================================
+# FUNÇÃO PRINCIPAL DE TRADUÇÃO
+# ==========================================
 def traduzir_imagem(img_path, destino):
+    """Executa OCR, tradução e substituição visual."""
     reader = carregar_ocr()
     results = reader.readtext(img_path, detail=1, paragraph=True)
     img = Image.open(img_path).convert("RGB")
     draw = ImageDraw.Draw(img)
     img_np = np.array(img)
 
-    for (bbox, texto, conf) in results:
-        if conf < 0.5 or not texto.strip():
+    for res in results:
+        # Adaptação para diferentes formatos de retorno do EasyOCR
+        if len(res) == 3:
+            bbox, texto, conf = res
+        elif len(res) == 2:
+            bbox, texto = res
+            conf = 0.99  # assume alta confiança
+        else:
             continue
+
+        if not texto.strip():
+            continue
+
         texto_limpo = " ".join(texto.split())
         traducao = traduzir_texto_bloco(texto_limpo, destino)
         cor_fundo = cor_media_regiao(img_np, bbox)
@@ -130,7 +149,7 @@ def traduzir_imagem(img_path, destino):
     return out_path
 
 # ==========================================
-# UPLOAD E EXIBIÇÃO
+# INTERFACE STREAMLIT
 # ==========================================
 arquivo = st.file_uploader("📤 Envie uma imagem (PNG, JPG, JPEG)", type=["png", "jpg", "jpeg"])
 
@@ -152,4 +171,4 @@ if arquivo and st.button("🚀 Traduzir imagem"):
             st.download_button("📥 Baixar imagem traduzida", f, file_name="imagem_traduzida.png")
 
 st.markdown("---")
-st.caption("💡 Tradução por blocos — ideal para fluxogramas, manuais e slides técnicos.")
+st.caption("💡 Tradução por blocos — ideal para fluxogramas, manuais e slides técnicos (compatível com Streamlit Cloud).")
