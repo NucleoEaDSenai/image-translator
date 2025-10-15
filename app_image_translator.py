@@ -3,13 +3,13 @@ import easyocr
 import requests
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
-import tempfile, os, statistics
+import tempfile, os
 
 # ==========================================
 # CONFIGURAÇÃO GERAL
 # ==========================================
 st.set_page_config(page_title="Tradutor de Imagens Avançado", layout="wide")
-st.title("🖼️ Tradutor de Imagens Avançado (LibreTranslate + EasyOCR + IA Visual)")
+st.title("🖼️ Tradutor de Imagens Avançado (LibreTranslate + EasyOCR + Fontes Locais)")
 
 st.markdown("""
 Faça upload de uma imagem com textos em português (ou outro idioma).  
@@ -55,7 +55,6 @@ def traduzir_texto(texto, destino):
     return texto
 
 def cor_media_regiao(img_np, bbox):
-    """Calcula a cor média da região (usada para pintar fundo)."""
     (x0, y0), (x1, y1) = bbox[0], bbox[2]
     x0, y0, x1, y1 = map(int, [x0, y0, x1, y1])
     recorte = img_np[y0:y1, x0:x1]
@@ -65,18 +64,31 @@ def cor_media_regiao(img_np, bbox):
     return media
 
 def escolher_cor_texto(cor_fundo):
-    """Escolhe preto ou branco com melhor contraste."""
     luminancia = (0.299*cor_fundo[0] + 0.587*cor_fundo[1] + 0.114*cor_fundo[2])
     return (0, 0, 0) if luminancia > 128 else (255, 255, 255)
 
-def ajustar_tamanho_fonte(draw, texto, bbox, fonte_base):
-    """Redimensiona fonte para caber dentro do box original."""
+def carregar_fonte_variavel(tamanho=20):
+    """Carrega Roboto ou Acme automaticamente, com fallback."""
+    fontes = [
+        "fonts/Roboto-VariableFont_wdth,wght.ttf",
+        "fonts/Roboto-Italic-VariableFont_wdth,wght.ttf",
+        "fonts/Acme-Regular.ttf"
+    ]
+    for fpath in fontes:
+        if os.path.exists(fpath):
+            try:
+                return ImageFont.truetype(fpath, tamanho)
+            except:
+                continue
+    return ImageFont.load_default()
+
+def ajustar_tamanho_fonte(draw, texto, bbox):
     largura_box = bbox[2][0] - bbox[0][0]
-    tamanho = 20
-    fonte = ImageFont.truetype(fonte_base, tamanho)
+    tamanho = 10
+    fonte = carregar_fonte_variavel(tamanho)
     while draw.textlength(texto, font=fonte) < largura_box * 0.9:
         tamanho += 1
-        fonte = ImageFont.truetype(fonte_base, tamanho)
+        fonte = carregar_fonte_variavel(tamanho)
         if tamanho > 120:
             break
     return fonte
@@ -87,7 +99,6 @@ def traduzir_imagem(img_path, destino):
     img = Image.open(img_path).convert("RGB")
     draw = ImageDraw.Draw(img)
     img_np = np.array(img)
-    fonte_base = os.path.join("fonts", "Roboto-Regular.ttf")
 
     for (bbox, texto, conf) in results:
         if conf < 0.4 or not texto.strip():
@@ -95,18 +106,10 @@ def traduzir_imagem(img_path, destino):
         traducao = traduzir_texto(texto, destino)
         cor_fundo = cor_media_regiao(img_np, bbox)
         cor_texto = escolher_cor_texto(cor_fundo)
-
-        # Apaga o texto original
         draw.polygon(bbox, fill=cor_fundo)
-
-        # Ajusta fonte
-        fonte = ajustar_tamanho_fonte(draw, traducao, bbox, fonte_base)
-
-        # Centraliza verticalmente
+        fonte = ajustar_tamanho_fonte(draw, traducao, bbox)
         x0, y0 = bbox[0]
         y0_adj = y0 + ((bbox[2][1] - bbox[0][1]) - fonte.size) / 2
-
-        # Desenha o texto traduzido
         draw.text((x0, y0_adj), traducao, fill=cor_texto, font=fonte)
 
     out_path = tempfile.NamedTemporaryFile(delete=False, suffix=".png").name
@@ -136,4 +139,4 @@ if arquivo and st.button("🚀 Traduzir imagem"):
             st.download_button("📥 Baixar imagem traduzida", f, file_name="imagem_traduzida.png")
 
 st.markdown("---")
-st.caption("💡 Tradutor visual com LibreTranslate + EasyOCR + Reconstrução de cor e layout • 100 % gratuito.")
+st.caption("💡 Tradutor visual com LibreTranslate + EasyOCR + Fontes Locais Roboto/Acme • Compatível com Streamlit Cloud.")
