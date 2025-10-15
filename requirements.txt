@@ -1,0 +1,5 @@
+streamlit
+easyocr
+pillow
+requests
+numpy
