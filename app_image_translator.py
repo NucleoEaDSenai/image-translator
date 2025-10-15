@@ -8,13 +8,13 @@ import tempfile, os
 # ==========================================
 # CONFIGURAÇÃO GERAL
 # ==========================================
-st.set_page_config(page_title="Tradutor de Imagens Avançado", layout="wide")
-st.title("🖼️ Tradutor de Imagens Avançado (LibreTranslate + EasyOCR + Fontes Locais)")
+st.set_page_config(page_title="Tradutor de Imagens Profissional", layout="wide")
+st.title("🖼️ Tradutor de Imagens Profissional (LibreTranslate + EasyOCR + Fontes Locais)")
 
 st.markdown("""
-Faça upload de uma imagem com textos em português (ou outro idioma).  
-O sistema detecta automaticamente o texto, traduz para o idioma escolhido  
-e gera uma **nova imagem fiel ao original** — mantendo cores, tamanho e posição.
+Faça upload de uma imagem (fluxograma, slide, diagrama, etc.).  
+O sistema detecta automaticamente os textos, traduz por blocos  
+e gera uma **nova imagem fiel ao layout original** — mantendo cores, fontes e posições.
 """)
 
 # ==========================================
@@ -32,7 +32,7 @@ idioma_destino = st.selectbox("Idioma de destino", list(idiomas.keys()))
 lang_code = idiomas[idioma_destino]
 
 # ==========================================
-# FUNÇÕES BASE
+# CONFIGURAÇÃO OCR + API
 # ==========================================
 ENDPOINTS = [
     "https://libretranslate.com/translate",
@@ -44,7 +44,8 @@ ENDPOINTS = [
 def carregar_ocr():
     return easyocr.Reader(["pt", "en", "es", "fr", "it", "de"])
 
-def traduzir_texto(texto, destino):
+def traduzir_texto_bloco(texto, destino):
+    """Traduz blocos de texto inteiros para manter coerência."""
     for url in ENDPOINTS:
         try:
             r = requests.post(url, json={"q": texto, "source": "auto", "target": destino}, timeout=25)
@@ -54,6 +55,9 @@ def traduzir_texto(texto, destino):
             continue
     return texto
 
+# ==========================================
+# FUNÇÕES VISUAIS
+# ==========================================
 def cor_media_regiao(img_np, bbox):
     (x0, y0), (x1, y1) = bbox[0], bbox[2]
     x0, y0, x1, y1 = map(int, [x0, y0, x1, y1])
@@ -68,7 +72,6 @@ def escolher_cor_texto(cor_fundo):
     return (0, 0, 0) if luminancia > 128 else (255, 255, 255)
 
 def carregar_fonte_variavel(tamanho=20):
-    """Carrega Roboto ou Acme automaticamente, com fallback."""
     fontes = [
         "fonts/Roboto-VariableFont_wdth,wght.ttf",
         "fonts/Roboto-Italic-VariableFont_wdth,wght.ttf",
@@ -84,9 +87,10 @@ def carregar_fonte_variavel(tamanho=20):
 
 def ajustar_tamanho_fonte(draw, texto, bbox):
     largura_box = bbox[2][0] - bbox[0][0]
+    altura_box = bbox[2][1] - bbox[0][1]
     tamanho = 10
     fonte = carregar_fonte_variavel(tamanho)
-    while draw.textlength(texto, font=fonte) < largura_box * 0.9:
+    while draw.textlength(texto, font=fonte) < largura_box * 0.9 and tamanho < altura_box:
         tamanho += 1
         fonte = carregar_fonte_variavel(tamanho)
         if tamanho > 120:
@@ -95,22 +99,31 @@ def ajustar_tamanho_fonte(draw, texto, bbox):
 
 def traduzir_imagem(img_path, destino):
     reader = carregar_ocr()
-    results = reader.readtext(img_path, detail=1)
+    results = reader.readtext(img_path, detail=1, paragraph=True)
     img = Image.open(img_path).convert("RGB")
     draw = ImageDraw.Draw(img)
     img_np = np.array(img)
 
     for (bbox, texto, conf) in results:
-        if conf < 0.4 or not texto.strip():
+        if conf < 0.5 or not texto.strip():
             continue
-        traducao = traduzir_texto(texto, destino)
+        texto_limpo = " ".join(texto.split())
+        traducao = traduzir_texto_bloco(texto_limpo, destino)
         cor_fundo = cor_media_regiao(img_np, bbox)
         cor_texto = escolher_cor_texto(cor_fundo)
         draw.polygon(bbox, fill=cor_fundo)
         fonte = ajustar_tamanho_fonte(draw, traducao, bbox)
+
+        # Centralização dentro da caixa detectada
         x0, y0 = bbox[0]
-        y0_adj = y0 + ((bbox[2][1] - bbox[0][1]) - fonte.size) / 2
-        draw.text((x0, y0_adj), traducao, fill=cor_texto, font=fonte)
+        largura_texto = draw.textlength(traducao, font=fonte)
+        largura_box = bbox[2][0] - x0
+        altura_box = bbox[2][1] - bbox[0][1]
+        altura_fonte = fonte.size
+        x_central = x0 + (largura_box - largura_texto) / 2
+        y_central = y0 + (altura_box - altura_fonte) / 2
+
+        draw.text((x_central, y_central), traducao, fill=cor_texto, font=fonte)
 
     out_path = tempfile.NamedTemporaryFile(delete=False, suffix=".png").name
     img.save(out_path)
@@ -122,7 +135,7 @@ def traduzir_imagem(img_path, destino):
 arquivo = st.file_uploader("📤 Envie uma imagem (PNG, JPG, JPEG)", type=["png", "jpg", "jpeg"])
 
 if arquivo and st.button("🚀 Traduzir imagem"):
-    with st.spinner("Detectando e traduzindo textos..."):
+    with st.spinner("Detectando blocos e traduzindo..."):
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
         tmp.write(arquivo.read())
         tmp.close()
@@ -139,4 +152,4 @@ if arquivo and st.button("🚀 Traduzir imagem"):
             st.download_button("📥 Baixar imagem traduzida", f, file_name="imagem_traduzida.png")
 
 st.markdown("---")
-st.caption("💡 Tradutor visual com LibreTranslate + EasyOCR + Fontes Locais Roboto/Acme • Compatível com Streamlit Cloud.")
+st.caption("💡 Tradução por blocos — ideal para fluxogramas, manuais e slides técnicos.")
